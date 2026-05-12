@@ -62,6 +62,7 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _checkSession() async {
+    await _checkForUpdate();
     final loggedIn = await AuthService.isLoggedIn();
     if (!loggedIn) return;
     final role = await AuthService.currentUserRole();
@@ -71,6 +72,20 @@ class _SplashScreenState extends State<SplashScreen> {
     } else {
       context.go('/passenger');
     }
+  }
+
+  Future<void> _checkForUpdate() async {
+    final update = await UpdateService.checkForUpdate();
+    if (update == null || !mounted) return;
+    await showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _UpdateDialog(
+        version: update['version'] as String,
+        apkUrl: update['apk_url'] as String,
+        releaseNotes: update['release_notes'] as String? ?? '',
+      ),
+    );
   }
 
   @override
@@ -274,6 +289,110 @@ class _SplashScreenState extends State<SplashScreen> {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _UpdateDialog extends StatefulWidget {
+  final String version;
+  final String apkUrl;
+  final String releaseNotes;
+
+  const _UpdateDialog({
+    required this.version,
+    required this.apkUrl,
+    required this.releaseNotes,
+  });
+
+  @override
+  State<_UpdateDialog> createState() => _UpdateDialogState();
+}
+
+class _UpdateDialogState extends State<_UpdateDialog> {
+  bool _downloading = false;
+  double _progress = 0;
+
+  Future<void> _download() async {
+    setState(() => _downloading = true);
+    try {
+      await UpdateService.downloadAndInstall(
+        widget.apkUrl,
+        onProgress: (received, total) {
+          if (total > 0 && mounted) {
+            setState(() => _progress = received / total);
+          }
+        },
+      );
+    } catch (_) {
+      if (mounted) Navigator.of(context).pop();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: Text(
+        'Update Available',
+        style: GoogleFonts.lexend(fontWeight: FontWeight.bold),
+      ),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Version ${widget.version} is ready to install.',
+            style: GoogleFonts.plusJakartaSans(fontSize: 13),
+          ),
+          if (widget.releaseNotes.isNotEmpty) ...[
+            const SizedBox(height: 8),
+            Text(
+              widget.releaseNotes,
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 12, color: AppColors.outline),
+            ),
+          ],
+          if (_downloading) ...[
+            const SizedBox(height: 16),
+            LinearProgressIndicator(
+              value: _progress > 0 ? _progress : null,
+              backgroundColor: AppColors.outline.withValues(alpha: 0.2),
+              color: AppColors.primary,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _progress > 0
+                  ? 'Downloading… ${(_progress * 100).toStringAsFixed(0)}%'
+                  : 'Preparing download…',
+              style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11, color: AppColors.outline),
+            ),
+          ],
+        ],
+      ),
+      actions: _downloading
+          ? null
+          : [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text('Later',
+                    style: GoogleFonts.plusJakartaSans(
+                        color: AppColors.outline)),
+              ),
+              ElevatedButton(
+                onPressed: _download,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+                child: Text('Update Now',
+                    style: GoogleFonts.plusJakartaSans(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold)),
+              ),
+            ],
     );
   }
 }
