@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import '../../theme/app_colors.dart';
+import '../../services/auth_service.dart';
+import '../../services/update_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -54,6 +56,24 @@ class _SplashScreenState extends State<SplashScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    _checkSession();
+  }
+
+  Future<void> _checkSession() async {
+    final loggedIn = await AuthService.isLoggedIn();
+    if (!loggedIn) return;
+    final role = await AuthService.currentUserRole();
+    if (!mounted) return;
+    if (role == 'driver') {
+      context.go('/driver');
+    } else {
+      context.go('/passenger');
+    }
+  }
+
+  @override
   void dispose() {
     _pageController.dispose();
     super.dispose();
@@ -76,10 +96,6 @@ class _SplashScreenState extends State<SplashScreen> {
       duration: const Duration(milliseconds: 400),
       curve: Curves.easeInOut,
     );
-  }
-
-  void _skip() {
-    context.go('/select-mode');
   }
 
   @override
@@ -218,56 +234,42 @@ class _SplashScreenState extends State<SplashScreen> {
             bottom: 48 + bottomPad,
             left: 24,
             right: 24,
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                TextButton(
-                  onPressed: _skip,
-                  child: Text(
-                    'Skip',
-                    style: GoogleFonts.lexend(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w600,
-                      color: AppColors.outline,
+            child: Center(
+              child: SizedBox(
+                width: 120,
+                height: 44,
+                child: ElevatedButton(
+                  onPressed: _nextPage,
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.primary,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
                     ),
+                    padding: EdgeInsets.zero,
                   ),
-                ),
-                SizedBox(
-                  width: 100,
-                  height: 44,
-                  child: ElevatedButton(
-                    onPressed: _nextPage,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.primary,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      padding: EdgeInsets.zero,
-                    ),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        Text(
-                          _currentPage == _pages.length - 1 ? 'Start' : 'Next',
-                          style: GoogleFonts.lexend(
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        _currentPage == _pages.length - 1 ? 'Start' : 'Next',
+                        style: GoogleFonts.lexend(
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
                         ),
-                        if (_currentPage < _pages.length - 1) ...[
-                          const SizedBox(width: 2),
-                          const Icon(
-                            Icons.arrow_forward_rounded,
-                            color: Colors.white,
-                            size: 14,
-                          ),
-                        ],
+                      ),
+                      if (_currentPage < _pages.length - 1) ...[
+                        const SizedBox(width: 2),
+                        const Icon(
+                          Icons.arrow_forward_rounded,
+                          color: Colors.white,
+                          size: 14,
+                        ),
                       ],
-                    ),
+                    ],
                   ),
                 ),
-              ],
+              ),
             ),
           ),
         ],

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import '../../theme/app_colors.dart';
+import '../../services/supabase_service.dart';
+import '../../services/auth_service.dart';
 
 class AccountScreen extends StatefulWidget {
   const AccountScreen({super.key});
@@ -12,6 +14,36 @@ class AccountScreen extends StatefulWidget {
 class _AccountScreenState extends State<AccountScreen> {
   bool _biometricEnabled = true;
   bool _darkModeEnabled = false;
+  Map<String, dynamic>? _profile;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadProfile();
+  }
+
+  Future<void> _loadProfile() async {
+    final p = await SupabaseService.fetchProfile();
+    if (mounted) setState(() => _profile = p);
+  }
+
+  Future<void> _signOut() async {
+    await AuthService.signOut();
+    if (mounted) context.go('/');
+  }
+
+  String get _displayName => (_profile?['full_name'] as String?)?.trim().isNotEmpty == true
+      ? _profile!['full_name'] as String
+      : 'User';
+
+  String get _displayEmail => (_profile?['email'] as String?) ?? '';
+  String get _displayPhone => (_profile?['phone'] as String?) ?? '';
+
+  String get _memberSince {
+    final raw = _profile?['created_at'] as String?;
+    if (raw == null) return '';
+    return 'MEMBER SINCE ${DateTime.parse(raw).year}';
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -71,12 +103,13 @@ class _AccountScreenState extends State<AccountScreen> {
                       ),
                     ]),
                     const SizedBox(height: 16),
-                    Text('Marco Santos', style: GoogleFonts.lexend(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.onSurface, letterSpacing: -0.5)),
+                    Text(_displayName, style: GoogleFonts.lexend(fontSize: 28, fontWeight: FontWeight.w800, color: AppColors.onSurface, letterSpacing: -0.5)),
                     const SizedBox(height: 8),
+                    if (_memberSince.isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 5),
                       decoration: BoxDecoration(color: AppColors.primaryContainer, borderRadius: BorderRadius.circular(99)),
-                      child: Text('MEMBER SINCE 2023', style: GoogleFonts.lexend(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.onPrimaryContainer, letterSpacing: 1)),
+                      child: Text(_memberSince, style: GoogleFonts.lexend(fontSize: 11, fontWeight: FontWeight.w700, color: AppColors.onPrimaryContainer, letterSpacing: 1)),
                     ),
                   ]),
                 ),
@@ -85,9 +118,10 @@ class _AccountScreenState extends State<AccountScreen> {
                 // Personal Information
                 _SectionHeader('Personal Information'),
                 _InfoSection(children: [
-                  _InfoRow(icon: Icons.person_outline, label: 'Full Name', value: 'Marco Santos'),
-                  _InfoRow(icon: Icons.mail_outline, label: 'Email', value: 'm.santos@email.com'),
-                  _InfoRow(icon: Icons.call_outlined, label: 'Phone', value: '+63 917 123 4567'),
+                  _InfoRow(icon: Icons.person_outline, label: 'Full Name', value: _displayName),
+                  _InfoRow(icon: Icons.mail_outline, label: 'Email', value: _displayEmail),
+                  if (_displayPhone.isNotEmpty)
+                    _InfoRow(icon: Icons.call_outlined, label: 'Phone', value: _displayPhone),
                 ]),
                 const SizedBox(height: 24),
 
@@ -175,7 +209,7 @@ class _AccountScreenState extends State<AccountScreen> {
 
                 // Logout
                 GestureDetector(
-                  onTap: () => context.go('/'),
+                  onTap: _signOut,
                   child: Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(20),

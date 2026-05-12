@@ -1,6 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/route_model.dart';
 import '../models/landmark_model.dart';
+import 'auth_service.dart';
 
 class SupabaseService {
   static SupabaseClient get _db => Supabase.instance.client;
@@ -11,6 +12,7 @@ class SupabaseService {
         .select(
           'id, name, color, vehicle_type, description, hours, frequency, stops',
         )
+        .or('status.eq.approved,status.is.null')
         .order('created_at', ascending: true);
     return (data as List)
         .map((json) => RouteModel.fromJson(json as Map<String, dynamic>))
@@ -35,11 +37,55 @@ class SupabaseService {
             'id, name, color, vehicle_type, description, hours, frequency, stops',
           )
           .eq('id', routeId)
+          .or('status.eq.approved,status.is.null')
           .single();
       return RouteModel.fromJson(data);
     } catch (e) {
       return null;
     }
+  }
+
+  static Future<Map<String, dynamic>?> fetchProfile() async {
+    final uid = await AuthService.currentUserId();
+    if (uid == null) return null;
+    try {
+      return await _db.from('accounts').select().eq('id', uid).single();
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> submitFeedbackForm({
+    required String category,
+    String name = '',
+    required String description,
+  }) async {
+    await _db.from('feedback').insert({
+      'category': category,
+      'name': name.isEmpty ? null : name,
+      'description': description,
+    });
+  }
+
+  static Future<void> updateBenefitType(String benefitType) async {
+    final uid = await AuthService.currentUserId();
+    if (uid == null) return;
+    await _db
+        .from('accounts')
+        .update({'benefit_type': benefitType})
+        .eq('id', uid);
+  }
+
+  static Future<void> submitFeedback({
+    required int rating,
+    String comment = '',
+  }) async {
+    await _db.from('ratings').insert({
+      'score': rating,
+      'comments': comment.isEmpty ? null : comment,
+      'source': 'mobile',
+      'rated_at': DateTime.now().toIso8601String(),
+    });
   }
 
   // Fetch route by QR token (from jeepney_qr_tokens table)

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import '../../theme/app_colors.dart';
+import '../../services/auth_service.dart';
 
 class DriverSignupPersonalInfoScreen extends StatefulWidget {
   const DriverSignupPersonalInfoScreen({super.key});
@@ -35,27 +36,33 @@ class _DriverSignupPersonalInfoScreenState
     super.dispose();
   }
 
-  void _nextStep() {
-    if (_formKey.currentState!.validate()) {
-      setState(() => _isLoading = true);
-
-      // Simulate data persistence
-      Future.delayed(const Duration(milliseconds: 800), () {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          // Pass personal info to next step
-          context.go(
-            '/driver-signup-selfie',
-            extra: {
-              'firstName': _firstNameController.text,
-              'lastName': _lastNameController.text,
-              'phone': _phoneController.text,
-              'email': _emailController.text,
-              'password': _passwordController.text,
-            },
-          );
-        }
-      });
+  Future<void> _nextStep() async {
+    if (!_formKey.currentState!.validate()) return;
+    setState(() => _isLoading = true);
+    try {
+      await AuthService.signUpDriver(
+        email: _emailController.text,
+        password: _passwordController.text,
+        firstName: _firstNameController.text,
+        lastName: _lastNameController.text,
+        phone: _phoneController.text,
+      );
+      if (!mounted) return;
+      context.go('/driver-signup-selfie');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              e.toString().replaceFirst('Exception: ', ''),
+              style: GoogleFonts.plusJakartaSans(),
+            ),
+            backgroundColor: AppColors.error,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
   }
 

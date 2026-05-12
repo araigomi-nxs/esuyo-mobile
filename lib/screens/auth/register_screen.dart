@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import '../../theme/app_colors.dart';
+import '../../services/auth_service.dart';
 
 class RegisterScreen extends StatefulWidget {
   const RegisterScreen({super.key});
@@ -14,6 +15,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   final _formKey = GlobalKey<FormState>();
   final _firstNameController = TextEditingController();
   final _lastNameController = TextEditingController();
+  final _emailController = TextEditingController();
   final _phoneController = TextEditingController();
   final _addressController = TextEditingController();
   final _passwordController = TextEditingController();
@@ -27,6 +29,7 @@ class _RegisterScreenState extends State<RegisterScreen> {
   void dispose() {
     _firstNameController.dispose();
     _lastNameController.dispose();
+    _emailController.dispose();
     _phoneController.dispose();
     _addressController.dispose();
     _passwordController.dispose();
@@ -59,48 +62,46 @@ class _RegisterScreenState extends State<RegisterScreen> {
     }
   }
 
-  void _register() {
-    if (_formKey.currentState!.validate()) {
-      if (_selectedDate == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Please select your date of birth', style: GoogleFonts.plusJakartaSans()),
-            backgroundColor: AppColors.error,
-          ),
-        );
-        return;
-      }
-      
-      if (_passwordController.text.length < 6) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Password must be at least 6 characters', style: GoogleFonts.plusJakartaSans()),
-            backgroundColor: AppColors.error,
-          ),
-        );
-        return;
-      }
-      
-      if (_passwordController.text != _confirmPasswordController.text) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Passwords do not match', style: GoogleFonts.plusJakartaSans()),
-            backgroundColor: AppColors.error,
-          ),
-        );
-        return;
-      }
-      
-      setState(() => _isLoading = true);
-      
-      // Simulate registration - replace with actual auth logic
-      Future.delayed(const Duration(seconds: 2), () {
-        if (mounted) {
-          setState(() => _isLoading = false);
-          context.go('/benefits');
-        }
-      });
+  Future<void> _register() async {
+    if (!_formKey.currentState!.validate()) return;
+    if (_selectedDate == null) {
+      _showError('Please select your date of birth');
+      return;
     }
+    if (_passwordController.text != _confirmPasswordController.text) {
+      _showError('Passwords do not match');
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    try {
+      final dob =
+          '${_selectedDate!.year}-${_selectedDate!.month.toString().padLeft(2, '0')}-${_selectedDate!.day.toString().padLeft(2, '0')}';
+      await AuthService.signUpPassenger(
+        email: _emailController.text,
+        password: _passwordController.text,
+        firstName: _firstNameController.text,
+        lastName: _lastNameController.text,
+        phone: _phoneController.text,
+        address: _addressController.text,
+        dateOfBirth: dob,
+      );
+      if (!mounted) return;
+      context.go('/benefits');
+    } catch (e) {
+      if (mounted) _showError(e.toString().replaceFirst('Exception: ', ''));
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(msg, style: GoogleFonts.plusJakartaSans()),
+        backgroundColor: AppColors.error,
+      ),
+    );
   }
 
   @override
@@ -220,7 +221,17 @@ class _RegisterScreenState extends State<RegisterScreen> {
                   keyboardType: TextInputType.phone,
                 ),
                 const SizedBox(height: 20),
-                
+
+                // Email
+                _buildTextField(
+                  label: 'EMAIL',
+                  controller: _emailController,
+                  hint: 'juan@example.com',
+                  icon: Icons.email_outlined,
+                  keyboardType: TextInputType.emailAddress,
+                ),
+                const SizedBox(height: 20),
+
                 // Password
                 _buildTextField(
                   label: 'PASSWORD',
@@ -386,8 +397,10 @@ class _RegisterScreenState extends State<RegisterScreen> {
             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
           ),
           validator: (value) {
-            if (value == null || value.isEmpty) {
-              return 'This field is required';
+            if (value == null || value.isEmpty) return 'This field is required';
+            if (keyboardType == TextInputType.emailAddress &&
+                !value.contains('@')) {
+              return 'Please enter a valid email';
             }
             return null;
           },

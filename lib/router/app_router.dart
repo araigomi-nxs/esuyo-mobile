@@ -23,6 +23,8 @@ import '../screens/passenger/legazpi_loop_calculation_screen.dart';
 import '../screens/passenger/route_detail_screen.dart';
 import '../models/route_model.dart';
 import '../screens/driver/driver_dashboard_screen.dart';
+import '../screens/driver/pasada_mode_screen.dart';
+import '../screens/passenger/trip_progress_screen.dart';
 import '../widgets/passenger_bottom_nav.dart';
 
 int _previousIndex = 0;
@@ -159,6 +161,7 @@ final GoRouter appRouter = GoRouter(
               tipAmount: extra?['tip']?.toInt() ?? extra?['tipAmount'] ?? 0,
               estimatedMinutes: extra?['estimatedMinutes'] ?? 0,
               paymentMethod: extra?['paymentMethod'] ?? 'Wallet',
+              route: extra?['route'] as RouteModel?,
             );
           },
         ),
@@ -232,6 +235,19 @@ final GoRouter appRouter = GoRouter(
       path: '/driver',
       name: 'driver_dashboard',
       builder: (context, state) => const DriverDashboardScreen(),
+    ),
+    GoRoute(
+      path: '/passenger/trip-progress',
+      name: 'trip_progress',
+      builder: (context, state) => const TripProgressScreen(),
+    ),
+    GoRoute(
+      path: '/driver/pasada',
+      name: 'pasada_mode',
+      builder: (context, state) {
+        final route = state.extra is RouteModel ? state.extra as RouteModel : null;
+        return PasadaModeScreen(route: route);
+      },
     ),
   ],
 );

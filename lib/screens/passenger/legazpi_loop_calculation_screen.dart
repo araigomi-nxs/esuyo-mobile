@@ -1617,6 +1617,7 @@ class _LegazpiLoopCalculationScreenState
                                   'estimatedMinutes': _estimatedMinutes,
                                   'hasDiscount': hasDiscount,
                                   'paymentMethod': 'E-Suyo Wallet',
+                                  'route': widget.initialRoute,
                                 },
                               );
                             },

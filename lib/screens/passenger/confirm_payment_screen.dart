@@ -3,7 +3,9 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:go_router/go_router.dart';
 import '../../theme/app_colors.dart';
 import '../../services/wallet_service.dart';
+import '../../services/active_trip_service.dart';
 import '../../utils/fare_matrix.dart';
+import '../../models/route_model.dart';
 
 class ConfirmPaymentScreen extends StatefulWidget {
   final String startingPoint;
@@ -17,6 +19,7 @@ class ConfirmPaymentScreen extends StatefulWidget {
   final int tipAmount;
   final int estimatedMinutes;
   final String paymentMethod;
+  final RouteModel? route;
 
   const ConfirmPaymentScreen({
     super.key,
@@ -31,6 +34,7 @@ class ConfirmPaymentScreen extends StatefulWidget {
     required this.tipAmount,
     this.estimatedMinutes = 0,
     this.paymentMethod = 'Wallet',
+    this.route,
   });
 
   @override
@@ -85,6 +89,17 @@ class _ConfirmPaymentScreenState extends State<ConfirmPaymentScreen> {
     try {
       final newBalance = await WalletService.instance.spend(widget.totalFare);
       if (!mounted) return;
+
+      ActiveTripService.instance.startTrip(ActiveTripData(
+        from: widget.startingPoint,
+        to: widget.dropOffPoint,
+        distanceKm: widget.distance,
+        fare: widget.totalFare,
+        vehicleType: widget.vehicleType,
+        estimatedMinutes: widget.estimatedMinutes,
+        route: widget.route,
+      ));
+
       context.pushNamed(
         'payment_success',
         extra: {

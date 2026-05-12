@@ -1,11 +1,14 @@
 import 'dart:async';
-import 'dart:math' show Point;
+import 'dart:convert';
+import 'dart:math' show Point, sin, cos, atan2, sqrt, pi;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:maplibre_gl/maplibre_gl.dart' as ml;
 import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:http/http.dart' as http;
 import '../../theme/app_colors.dart';
 import '../../models/route_model.dart';
 import '../../models/landmark_model.dart';
@@ -33,6 +36,12 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
   List<LandmarkModel> _landmarks = [];
   Timer? _statusRefreshTimer;
   double _bearing = 0.0;
+
+  ml.LatLng? _userLocation;
+  bool _isLocatingWalk = false;
+  double? _walkDistanceM;
+  double? _walkTimeMin;
+  bool _walkLayersAdded = false;
 
   @override
   void initState() {
@@ -380,6 +389,214 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
     }
   }
 
+  List<ml.LatLng> _buildFlatRouteCoords() {
+    final coords = <ml.LatLng>[];
+    for (final stop in widget.route.stops) {
+      for (final c in stop.roadPathFromPrev) {
+        coords.add(ml.LatLng((c[1] as num).toDouble(), (c[0] as num).toDouble()));
+      }
+    }
+    if (coords.isEmpty) {
+      for (final stop in widget.route.stops) {
+        coords.add(ml.LatLng(stop.lat, stop.lng));
+      }
+    }
+    return coords;
+  }
+
+  ml.LatLng _findNearestRoutePoint(ml.LatLng user) {
+    final coords = _buildFlatRouteCoords();
+    if (coords.isEmpty) return user;
+    double bestDistSq = double.infinity;
+    ml.LatLng best = coords.first;
+    for (int i = 0; i < coords.length - 1; i++) {
+      final ax = coords[i].longitude, ay = coords[i].latitude;
+      final bx = coords[i + 1].longitude, by = coords[i + 1].latitude;
+      final px = user.longitude, py = user.latitude;
+      final dx = bx - ax, dy = by - ay;
+      final lenSq = dx * dx + dy * dy;
+      final tc = lenSq > 0
+          ? ((px - ax) * dx + (py - ay) * dy) / lenSq
+          : 0.0;
+      final t = tc.clamp(0.0, 1.0);
+      final nx = ax + t * dx, ny = ay + t * dy;
+      final dsq = (px - nx) * (px - nx) + (py - ny) * (py - ny);
+      if (dsq < bestDistSq) {
+        bestDistSq = dsq;
+        best = ml.LatLng(ny, nx);
+      }
+    }
+    return best;
+  }
+
+  double _haversineDistance(ml.LatLng a, ml.LatLng b) {
+    const R = 6371000.0;
+    final lat1 = a.latitude * pi / 180;
+    final lat2 = b.latitude * pi / 180;
+    final dLat = (b.latitude - a.latitude) * pi / 180;
+    final dLng = (b.longitude - a.longitude) * pi / 180;
+    final hav = sin(dLat / 2) * sin(dLat / 2) +
+        cos(lat1) * cos(lat2) * sin(dLng / 2) * sin(dLng / 2);
+    return R * 2 * atan2(sqrt(hav), sqrt(1 - hav));
+  }
+
+  Future<void> _fetchAndDrawWalk() async {
+    if (_isLocatingWalk) return;
+    setState(() => _isLocatingWalk = true);
+    try {
+      var perm = await Geolocator.checkPermission();
+      if (perm == LocationPermission.denied) {
+        perm = await Geolocator.requestPermission();
+      }
+      if (perm == LocationPermission.denied ||
+          perm == LocationPermission.deniedForever) {
+        if (mounted) {
+          setState(() => _isLocatingWalk = false);
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Location permission denied')),
+          );
+        }
+        return;
+      }
+
+      final pos = await Geolocator.getCurrentPosition(
+        locationSettings: const LocationSettings(
+          accuracy: LocationAccuracy.high,
+          timeLimit: Duration(seconds: 10),
+        ),
+      );
+      if (!mounted) return;
+
+      final userPos = ml.LatLng(pos.latitude, pos.longitude);
+      final nearest = _findNearestRoutePoint(userPos);
+
+      List<List<double>> path;
+      double distM;
+      double timeMin;
+
+      try {
+        final url = 'https://router.project-osrm.org/route/v1/foot/'
+            '${userPos.longitude},${userPos.latitude};'
+            '${nearest.longitude},${nearest.latitude}'
+            '?overview=full&geometries=geojson';
+        final resp = await http
+            .get(Uri.parse(url))
+            .timeout(const Duration(seconds: 10));
+        if (resp.statusCode == 200) {
+          final data = jsonDecode(resp.body) as Map<String, dynamic>;
+          final routes = data['routes'] as List?;
+          if (routes != null && routes.isNotEmpty) {
+            final r = routes[0] as Map<String, dynamic>;
+            final geom = r['geometry'] as Map<String, dynamic>;
+            final raw = geom['coordinates'] as List;
+            path = raw
+                .map((c) => [
+                      (c[0] as num).toDouble(),
+                      (c[1] as num).toDouble(),
+                    ])
+                .toList();
+            distM = (r['distance'] as num).toDouble();
+            timeMin = (r['duration'] as num).toDouble() / 60;
+          } else {
+            throw Exception('empty routes');
+          }
+        } else {
+          throw Exception('bad status ${resp.statusCode}');
+        }
+      } catch (_) {
+        // Fallback: straight line to nearest route point
+        path = [
+          [userPos.longitude, userPos.latitude],
+          [nearest.longitude, nearest.latitude],
+        ];
+        distM = _haversineDistance(userPos, nearest);
+        timeMin = distM / 83.0; // ~5 km/h walking speed
+      }
+
+      if (!mounted) return;
+      setState(() {
+        _userLocation = userPos;
+        _walkDistanceM = distM;
+        _walkTimeMin = timeMin;
+        _isLocatingWalk = false;
+      });
+
+      await _drawWalkLayer(path, userPos);
+      await _mapController?.animateCamera(
+        ml.CameraUpdate.newLatLngZoom(userPos, 15.5),
+      );
+    } catch (_) {
+      if (mounted) setState(() => _isLocatingWalk = false);
+    }
+  }
+
+  Future<void> _clearWalkPath() async {
+    setState(() {
+      _userLocation = null;
+      _walkDistanceM = null;
+      _walkTimeMin = null;
+    });
+    if (_walkLayersAdded) {
+      await _mapController?.setGeoJsonSource('walk-data', {
+        'type': 'FeatureCollection',
+        'features': [],
+      });
+    }
+  }
+
+  Future<void> _drawWalkLayer(
+      List<List<double>> path, ml.LatLng userPos) async {
+    final ctrl = _mapController;
+    if (ctrl == null) return;
+    final geojson = {
+      'type': 'FeatureCollection',
+      'features': [
+        {
+          'type': 'Feature',
+          'geometry': {'type': 'LineString', 'coordinates': path},
+          'properties': {'ft': 'walk-line'},
+        },
+        {
+          'type': 'Feature',
+          'geometry': {
+            'type': 'Point',
+            'coordinates': [userPos.longitude, userPos.latitude],
+          },
+          'properties': {'ft': 'user-dot'},
+        },
+      ],
+    };
+    if (_walkLayersAdded) {
+      await ctrl.setGeoJsonSource('walk-data', geojson);
+    } else {
+      await ctrl.addGeoJsonSource('walk-data', geojson);
+      await ctrl.addLineLayer(
+        'walk-data',
+        'walk-line-layer',
+        ml.LineLayerProperties(
+          lineColor: '#2563EB',
+          lineWidth: 3.5,
+          lineOpacity: 0.9,
+          lineDasharray: [4.0, 3.0],
+        ),
+        filter: ['==', ['get', 'ft'], 'walk-line'],
+        enableInteraction: false,
+      );
+      await ctrl.addCircleLayer(
+        'walk-data',
+        'walk-dot-layer',
+        ml.CircleLayerProperties(
+          circleRadius: 8.0,
+          circleColor: '#2563EB',
+          circleStrokeColor: '#FFFFFF',
+          circleStrokeWidth: 2.5,
+        ),
+        filter: ['==', ['get', 'ft'], 'user-dot'],
+        enableInteraction: false,
+      );
+      _walkLayersAdded = true;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -471,8 +688,70 @@ class _RouteDetailScreenState extends State<RouteDetailScreen> {
                       Positioned(
                         top: 16,
                         right: 16,
-                        child: MapCompass(bearing: _bearing),
+                        child: Column(
+                          children: [
+                            MapCompass(bearing: _bearing),
+                            const SizedBox(height: 8),
+                            _isLocatingWalk
+                                ? Container(
+                                    width: 40,
+                                    height: 40,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white,
+                                      shape: BoxShape.circle,
+                                      boxShadow: [
+                                        BoxShadow(
+                                          blurRadius: 4,
+                                          color: Colors.black.withValues(
+                                              alpha: 0.2),
+                                        ),
+                                      ],
+                                    ),
+                                    child: const Padding(
+                                      padding: EdgeInsets.all(10),
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: Color(0xFF2563EB),
+                                      ),
+                                    ),
+                                  )
+                                : Material(
+                                    color: _userLocation != null
+                                        ? const Color(0xFF2563EB)
+                                        : Colors.white,
+                                    shape: const CircleBorder(),
+                                    elevation: 3,
+                                    child: InkWell(
+                                      onTap: _userLocation != null
+                                          ? _clearWalkPath
+                                          : _fetchAndDrawWalk,
+                                      customBorder: const CircleBorder(),
+                                      child: SizedBox(
+                                        width: 40,
+                                        height: 40,
+                                        child: Icon(
+                                          Icons.directions_walk_rounded,
+                                          size: 20,
+                                          color: _userLocation != null
+                                              ? Colors.white
+                                              : const Color(0xFF2563EB),
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                          ],
+                        ),
                       ),
+                      if (_userLocation != null && _walkDistanceM != null)
+                        Positioned(
+                          bottom: 16,
+                          left: 12,
+                          right: 12,
+                          child: _WalkInfoCard(
+                            distanceM: _walkDistanceM!,
+                            timeMin: _walkTimeMin ?? 0,
+                          ),
+                        ),
                     ],
                   ),
           ),
@@ -924,5 +1203,72 @@ class _StopRow extends StatelessWidget {
       default:
         return '📍';
     }
+  }
+}
+
+class _WalkInfoCard extends StatelessWidget {
+  final double distanceM;
+  final double timeMin;
+
+  const _WalkInfoCard({required this.distanceM, required this.timeMin});
+
+  @override
+  Widget build(BuildContext context) {
+    final distStr = distanceM >= 1000
+        ? '${(distanceM / 1000).toStringAsFixed(1)} km'
+        : '${distanceM.toStringAsFixed(0)} m';
+    final timeStr = timeMin < 1 ? '<1 min' : '${timeMin.round()} min';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [
+          BoxShadow(
+            blurRadius: 10,
+            color: Colors.black.withValues(alpha: 0.18),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: const Color(0xFF2563EB).withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(
+              Icons.directions_walk_rounded,
+              color: Color(0xFF2563EB),
+              size: 18,
+            ),
+          ),
+          const SizedBox(width: 10),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                'Walk to nearest route point',
+                style: GoogleFonts.plusJakartaSans(
+                  fontSize: 11,
+                  color: Colors.black54,
+                ),
+              ),
+              Text(
+                '$distStr · $timeStr walk',
+                style: GoogleFonts.lexend(
+                  fontSize: 14,
+                  fontWeight: FontWeight.bold,
+                  color: const Color(0xFF1E293B),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
   }
 }
